@@ -1,0 +1,109 @@
+#include <SPI.h>
+#include <SD.h>
+#include <DS3231.h>
+DS3231  rtc(SDA, SCL);
+#include <Wire.h>
+#include <SoftwareSerial.h>
+SoftwareSerial Nano(7, 8);
+
+#define read_time 500
+#define one_rotation 36 //Pergantian hitam ke putih
+#define circumference 0.5654 //Dalam satuan meter
+#define wind_pin 2
+#define pinCS 10
+
+union { //data dikirim ke NodeMCU
+  struct {
+    float kec_angin;
+  } param;
+  byte packet[4];
+} dataKirim;
+
+File myFile;
+char fileName[] = "data";
+volatile unsigned long rotation;
+unsigned long start_time;
+float wind_speed;
+
+void setup() {
+  Serial.begin(9600);
+  while (!Serial) {
+    ;
+  }
+  SPI.begin();
+  SDCard_init();
+  Wire.begin();
+  rtc.begin();
+  Nano.begin(9600);
+  pinMode(pinCS, OUTPUT);
+  pinMode(wind_pin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(wind_pin), addTime, CHANGE);
+  sei(); //Enables Interrupts
+  start_time - millis();
+  
+  rtc.setDOW(FRIDAY);        // Mengatur Hari
+  rtc.setTime(17, 30, 0);     // Mengatur Waktu, Menggunakan Format 24 jam
+  rtc.setDate(3, 9, 2021);    // Mengatur Tanggal 
+}
+
+void loop() {
+  if ((millis() - start_time) >= read_time) {
+    cli(); //Disable Interrupts
+    wind_speed = (circumference * rotation * 4 / one_rotation);
+    Serial.print(rtc.getDOWStr());
+    Serial.print(" ");
+    Serial.print(rtc.getDateStr());
+    Serial.print(" - ");
+    Serial.print(rtc.getTimeStr());
+    Serial.print(" kec = ");
+    Serial.print(wind_speed);
+    Serial.println(" m/s");
+    sei();//Enables Interrupts
+    rotation = 0;
+    saveSpeed();
+    start_time = millis();
+    if (Nano.available() > 0) {
+      sendData();
+    }
+  }
+}
+
+void addTime() {
+  rotation++;
+}
+
+void sendData() {
+  dataKirim.param.kec_angin = wind_speed;
+  Nano.write(dataKirim.packet, sizeof(dataKirim.packet));
+}
+
+void SDCard_init() {
+  // SD Card Initialization
+  Serial.println("Initializing SD Card...");
+  if (!SD.begin(pinCS)) {
+    Serial.print("SD card tidak terbaca.");
+  }
+  else {
+    Serial.print("SD card terbaca.");
+  }
+
+}
+
+void saveSpeed() {
+  myFile = SD.open(String(fileName) + ".txt", FILE_WRITE);
+  if (myFile) {
+          myFile.print(rtc.getDOWStr());
+          myFile.print(" ");
+          myFile.print(rtc.getDateStr());
+          myFile.print(" - ");
+          myFile.print(rtc.getTimeStr());
+          myFile.print(" kec = ");
+    myFile.println(wind_speed);
+    //      myFile.println(" m/s");
+    myFile.close(); // close the file
+    Serial.println(" --Saved to file!");
+  }
+  else {
+    Serial.println(" error opening " + String(fileName) + ".txt");
+  }
+}
